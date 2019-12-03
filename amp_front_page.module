@@ -1,0 +1,142 @@
+<?php
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function amp_front_page_form_amp_admin_form_alter(&$form, &$form_state) {
+  $form['amp_enable_page_pattern_group'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Enable page pattern'),
+    '#tree' => FALSE,
+  );
+  $form['amp_enable_page_pattern_group']['amp_front_page_pattern'] = array(
+    '#type' => 'textarea',
+    '#rows' => '7',
+    '#title' => t('Enable page'),
+    '#description' => t('For example node/*, taxonomy/term/156, about-us'),
+    '#default_value' => variable_get('amp_front_page_pattern', '<front>'),
+  );
+  $form['amp_disable_page_pattern_group'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Disable page pattern'),
+    '#tree' => FALSE,
+  );
+  $form['amp_disable_page_pattern_group']['amp_front_page_pattern_disable'] = array(
+    '#type' => 'textarea',
+    '#rows' => '7',
+    '#title' => t('Disable page'),
+    '#description' => t('For example node/*, taxonomy/term/156, about-us'),
+    '#default_value' => variable_get('amp_front_page_pattern_disable', ''),
+  );
+}
+
+/**
+ * Implements hook_is_amp_request_alter().
+ */
+function amp_front_page_is_amp_request_alter(&$result) {
+  $result = FALSE;
+  $page_pattern = variable_get('amp_front_page_pattern', '<front>');
+  $page_pattern_disable = variable_get('amp_front_page_pattern_disable');
+  $request_path = request_path();
+  $current_path = current_path();
+  $is_valid_pages = explode(', ', $page_pattern);
+  $is_disable_pages = explode(', ', $page_pattern_disable);
+  foreach ($is_valid_pages as $page) {
+    if ($page and drupal_match_path($current_path, $page) || $page == $request_path) {
+      // Add amphtml.
+      $uri['options']['query']['amp'] = NULL;
+      $uri['options']['absolute'] = TRUE;
+      drupal_add_html_head_link(array('rel' => 'amphtml', 'href' => url($request_path, $uri['options'])), TRUE);
+      $result = TRUE;
+      break;
+    }
+  }
+  if (!isset($_GET['amp'])) {
+    $result = FALSE;
+  }
+  foreach ($is_disable_pages as $page) {
+    if ($page and drupal_match_path($current_path, $page) || $page == $request_path) {
+      $result = FALSE;
+      break;
+    }
+  }
+  // Avoid load node.
+  if (!$result) {
+    return;
+  }
+  $node = menu_get_object();
+  if ($node && in_array($node->type, amp_get_enabled_types())) {
+    $display_config = field_bundle_settings('node', $node->type);
+    // Check if enable amp display.
+    if (!isset($display_config['view_modes']['amp']) && !$display_config['view_modes']['amp']['custom_settings']) {
+      $result = FALSE;
+    }
+  }
+}
+
+/**
+ * Implements hook_views_pre_view()
+ */
+function amp_front_page_views_pre_view(&$view, &$display_id, &$args) {
+  if (!amp_is_amp_request()) {
+    return;
+  }
+  $default_display = $view->display['default'];
+  // Check if content type has amp display.
+  if (isset($default_display->display_options['filters']['type'])) {
+    $type = $view->display['default']->display_options['filters']['type']['table'];
+    $bundle = reset($view->display['default']->display_options['filters']['type']['value']);
+    $display_config = field_bundle_settings($type, $bundle);
+    // Set amp display.
+    if (isset($display_config['view_modes']['amp']) && $display_config['view_modes']['amp']['custom_settings']) {
+      $view->display_handler->options['row_options'] = array(
+        'relationship' => 'none',
+        'view_mode' => 'amp',
+        'links' => 0,
+        'comments' => false,
+      );
+    }
+  }
+
+  // Rewrite blazy formatter.
+  _amp_front_page_prepare_images_for_amp_view($view, 'default');
+  _amp_front_page_prepare_images_for_amp_view($view, $display_id);
+}
+
+/**
+ * Change formatter blazy_image to default.
+ * @param $view
+ * @param string $display_name
+ */
+function _amp_front_page_prepare_images_for_amp_view(&$view, $display_name) {
+  foreach ($view->display[$display_name]->handler->options['fields'] as $field) {
+    if ($field['type'] == 'blazy_image') {
+      unset($view->display[$display_name]->handler->options['fields'][$field['id']]['type']);
+      $view->display[$display_name]->handler->options['fields'][$field['id']]['settings'] = array(
+        'image_style' => $field['settings']['image_style'],
+        'image_link' => 'content',
+        'current_view_mode' => 'amp',
+      );
+    }
+  }
+}
+
+/**
+ * Implements hook_html_head_alter()
+ */
+function amp_front_page_html_head_alter(&$head_elements) {
+  // Disable amphtml.
+  $page_pattern_disable = variable_get('amp_front_page_pattern_disable');
+  $request_path = request_path();
+  $current_path = current_path();
+  $is_disable_pages = explode(', ', $page_pattern_disable);
+  foreach ($is_disable_pages as $page) {
+    if ($page and drupal_match_path($current_path, $page) || $page == $request_path) {
+      foreach ($head_elements as $key => $element) {
+        if (strpos($key, 'drupal_add_html_head_link:amphtml:') === 0) {
+          unset($head_elements[$key]);
+        }
+      }
+    }
+  }
+}

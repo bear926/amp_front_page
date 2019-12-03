@@ -1,0 +1,5 @@
+name = AMP Front Page
+
+description = Enable amp for front page.
+dependencies[] = amp
+core = 7.x
